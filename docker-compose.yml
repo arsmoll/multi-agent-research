@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  backend:
+    build: .
+    container_name: research-backend
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    command: python -m src.api.server
+    restart: unless-stopped
+
+  frontend:
+    build: .
+    container_name: research-frontend
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://backend:8001
+    command: streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+    depends_on:
+      - backend
+    restart: unless-stopped
