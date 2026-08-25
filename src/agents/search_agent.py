@@ -3,11 +3,13 @@
 职责：将研究主题拆分为子问题，并行检索 Web 信息
 """
 import json
+import logging
 from src.llm.client import llm_client
 from src.tools.search import search_tool
 from src.workflow.state import ResearchState
 
-# 子问题拆分 Prompt
+logger = logging.getLogger(__name__)
+
 SUBQUERY_PROMPT = """你是一个研究分析师。请将以下研究主题拆分为 3-5 个具体的、可搜索的子问题。
 
 研究主题：{topic}
@@ -21,40 +23,44 @@ SUBQUERY_PROMPT = """你是一个研究分析师。请将以下研究主题拆�
 
 
 async def search_agent(state: ResearchState) -> dict:
-    """搜索 Agent 节点
-
-    1. LLM 拆分研究主题为子问题
-    2. Tavily 并行检索每个子问题
-    3. 汇总搜索结果
-    """
+    """搜索 Agent 节点"""
     topic = state["research_topic"]
     round_num = state.get("research_round", 0)
 
-    # 若是补充检索轮次，生成针对性查询
     if round_num > 0 and state.get("verified_findings"):
         low_credibility_findings = [
             f for f in state["verified_findings"] if f.get("credibility") == "low"
         ]
         if low_credibility_findings:
-            topic = f"补充研究：{topic}，重点关注以下未验证信息："
-            + ", ".join(f.get("claim", "") for f in low_credibility_findings[:3])
+            topic = f"补充研究：{topic}，重点关注以下未验证信息：" + ", ".join(
+                f.get("claim", "") for f in low_credibility_findings[:3]
+            )
 
     # LLM 拆分子问题
-    messages = [
-        {"role": "system", "content": "你是一个专业的研究分析师，擅长将复杂主题拆解为可搜索的子问题。"},
-        {"role": "user", "content": SUBQUERY_PROMPT.format(topic=topic)},
-    ]
-    raw = llm_client.chat_json(messages, temperature=0.2)
-    parsed = json.loads(raw)
-    sub_questions = parsed.get("sub_questions", [])[:5]
+    sub_questions = []
+    try:
+        messages = [
+            {"role": "system", "content": "你是一个专业的研究分析师，擅长将复杂主题拆解为可搜索的子问题。"},
+            {"role": "user", "content": SUBQUERY_PROMPT.format(topic=topic)},
+        ]
+        raw = llm_client.chat_json(messages, temperature=0.2)
+        parsed = json.loads(raw)
+        sub_questions = parsed.get("sub_questions", [])[:5]
+    except Exception as e:
+        logger.warning(f"子问题拆分失败，使用原始主题: {e}")
+        sub_questions = [topic]
 
     if not sub_questions:
         sub_questions = [topic]
 
     # 并行搜索
-    search_data = await search_tool.search_batch(sub_questions)
+    try:
+        search_data = await search_tool.search_batch(sub_questions)
+    except Exception as e:
+        logger.error(f"搜索全部失败: {e}")
+        search_data = {q: [] for q in sub_questions}
 
-    # 汇总所有搜索结果
+    # 汇总
     all_results = []
     for query, results in search_data.items():
         for r in results:
