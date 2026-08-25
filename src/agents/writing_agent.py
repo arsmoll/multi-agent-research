@@ -37,7 +37,7 @@ REPORT_PROMPT = """你是一个专业的研究报告撰写专家。请基于以�
 - 对可信度低的发现需注明「待进一步验证」"""
 
 
-def writing_agent(state: ResearchState) -> dict:
+async def writing_agent(state: ResearchState) -> dict:
     """写作 Agent 节点"""
     topic = state["research_topic"]
     verified = state.get("verified_findings", [])
@@ -65,7 +65,7 @@ def writing_agent(state: ResearchState) -> dict:
             {"role": "system", "content": "你是一个专业的研究报告撰写专家，擅长将研究发现整合为清晰、结构化的报告。"},
             {"role": "user", "content": REPORT_PROMPT.format(topic=topic, findings=findings_text)},
         ]
-        report = llm_client.chat(messages, temperature=0.4)
+        report = await llm_client.chat_async(messages, temperature=0.4)
     except Exception as e:
         logger.error(f"写作 Agent LLM 调用失败: {e}")
         # 降级：直接格式化研究发现
