@@ -43,7 +43,7 @@ async def search_agent(state: ResearchState) -> dict:
             {"role": "system", "content": "你是一个专业的研究分析师，擅长将复杂主题拆解为可搜索的子问题。"},
             {"role": "user", "content": SUBQUERY_PROMPT.format(topic=topic)},
         ]
-        raw = llm_client.chat_json(messages, temperature=0.2)
+        raw = await llm_client.chat_json_async(messages, temperature=0.2)
         parsed = json.loads(raw)
         sub_questions = parsed.get("sub_questions", [])[:5]
     except Exception as e:
