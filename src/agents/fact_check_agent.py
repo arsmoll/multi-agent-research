@@ -3,11 +3,13 @@
 职责：交叉验证研究发现，标注可信度（高/中/低）
 """
 import json
+import logging
 from src.llm.client import llm_client
 from src.config import settings
 from src.workflow.state import ResearchState
 
-# 事实核查 Prompt
+logger = logging.getLogger(__name__)
+
 FACT_CHECK_PROMPT = """你是一个事实核查专家。请对以下研究发现进行交叉验证，标注每条发现的可信度。
 
 研究发现：
@@ -34,12 +36,7 @@ FACT_CHECK_PROMPT = """你是一个事实核查专家。请对以下研究发现
 
 
 def fact_check_agent(state: ResearchState) -> dict:
-    """核查 Agent 节点
-
-    1. 接收分析 Agent 的研究发现
-    2. LLM 交叉验证各论断
-    3. 标注可信度，计算整体可信度分数
-    """
+    """核查 Agent 节点"""
     findings = state.get("findings", [])
     if not findings:
         return {
@@ -51,17 +48,27 @@ def fact_check_agent(state: ResearchState) -> dict:
 
     findings_text = json.dumps(findings, ensure_ascii=False, indent=2)
 
-    messages = [
-        {"role": "system", "content": "你是一个严谨的事实核查专家，擅长交叉验证信息的准确性和可靠性。"},
-        {"role": "user", "content": FACT_CHECK_PROMPT.format(findings=findings_text)},
-    ]
-    raw = llm_client.chat_json(messages, temperature=0.1)
-    parsed = json.loads(raw)
+    try:
+        messages = [
+            {"role": "system", "content": "你是一个严谨的事实核查专家，擅长交叉验证信息的准确性和可靠性。"},
+            {"role": "user", "content": FACT_CHECK_PROMPT.format(findings=findings_text)},
+        ]
+        raw = llm_client.chat_json(messages, temperature=0.1)
+        parsed = json.loads(raw)
+        verified = parsed.get("verified_findings", findings)
+        overall_score = parsed.get("overall_score", 0.5)
+    except Exception as e:
+        logger.error(f"核查 Agent LLM 调用失败: {e}")
+        # 降级：根据来源数量自动标注
+        verified = []
+        for f in findings:
+            src_count = len(f.get("sources", []))
+            cred = "high" if src_count >= 2 else "medium" if src_count == 1 else "low"
+            f["credibility"] = cred
+            f["verification_note"] = "自动标注（LLM 核查不可用）"
+            verified.append(f)
+        overall_score = 0.5
 
-    verified = parsed.get("verified_findings", findings)
-    overall_score = parsed.get("overall_score", 0.5)
-
-    # 判断是否需要补充检索
     threshold = settings.research.credibility_threshold
     max_rounds = settings.research.max_rounds
     current_round = state.get("research_round", 1)
