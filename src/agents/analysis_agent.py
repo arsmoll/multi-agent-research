@@ -26,7 +26,7 @@ EXTRACTION_PROMPT = """你是一个信息分析专家。请从以下搜索结果
 ]}}"""
 
 
-def analysis_agent(state: ResearchState) -> dict:
+async def analysis_agent(state: ResearchState) -> dict:
     """分析 Agent 节点"""
     search_results = state.get("search_results", [])
     if not search_results:
@@ -51,7 +51,7 @@ def analysis_agent(state: ResearchState) -> dict:
             {"role": "system", "content": "你是一个信息分析专家，擅长从非结构化文本中提取关键信息和数据。"},
             {"role": "user", "content": EXTRACTION_PROMPT.format(search_results=results_text)},
         ]
-        raw = llm_client.chat_json(messages, temperature=0.1)
+        raw = await llm_client.chat_json_async(messages, temperature=0.1)
         parsed = json.loads(raw)
         findings = parsed.get("findings", [])
     except Exception as e:
