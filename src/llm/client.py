@@ -5,6 +5,7 @@ LLM 客户端封装 — 多智能体协作研究系统
 """
 import time
 import logging
+from typing import Optional
 from openai import OpenAI
 from src.config import settings
 
@@ -34,7 +35,7 @@ class LLMClient:
             )
         return self._client
 
-    def chat(self, messages: list[dict], temperature: float | None = None) -> str:
+    def chat(self, messages: list, temperature: Optional[float] = None) -> str:
         """同步对话接口（带重试）"""
         last_err = None
         for attempt in range(3):
@@ -53,7 +54,7 @@ class LLMClient:
                     time.sleep(2 * (attempt + 1))
         raise last_err
 
-    def chat_json(self, messages: list[dict], temperature: float = 0.1) -> str:
+    def chat_json(self, messages: list, temperature: float = 0.1) -> str:
         """要求 JSON 格式输出的对话接口（带重试）"""
         last_err = None
         for attempt in range(3):
