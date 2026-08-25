@@ -1,33 +1,55 @@
 """
 Streamlit 交互界面 — 多智能体协作研究系统
-稳定版：先注入环境变量，再延迟导入业务模块
+超稳定版：全链路错误捕获 + 延迟加载 + 环境变量注入
 """
 import os
 import sys
+
+# ── 最基础导入：streamlit 必须先有，否则连错误都显示不了 ──
 import streamlit as st
 
-# ── 第一步：从 Streamlit Secrets 注入环境变量 ──
-# Streamlit Cloud 的 Secrets 不自动成为环境变量，需要手动注入
+# ── 页面配置（尽量早调用，防止后续出错） ──
+st.set_page_config(
+    page_title="多智能体研究系统",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+
+def _safe_main():
+    """主应用逻辑，全部包裹在 try/except 中"""
+    try:
+        _run_app()
+    except Exception as e:
+        import traceback
+        st.error("应用运行出错")
+        with st.expander("查看错误详情", expanded=True):
+            st.code(f"{e}\n\n{traceback.format_exc()}")
+        st.markdown(
+            '<p style="font-size:13px;color:#71717a;margin-top:16px;">'
+            '请截图反馈，或刷新页面重试。</p>',
+            unsafe_allow_html=True,
+        )
+
+
 def _inject_secrets_to_env():
-    """将 st.secrets 中的配置注入 os.environ，供下层模块读取"""
+    """将 st.secrets 中的配置注入 os.environ"""
     try:
         secrets = st.secrets
         for key in secrets.keys():
-            val = secrets[key]
-            if isinstance(val, (str, int, float)):
-                os.environ[key] = str(val)
+            try:
+                val = secrets[key]
+                if isinstance(val, (str, int, float)):
+                    os.environ[key] = str(val)
+            except Exception:
+                pass
     except Exception:
-        # 本地开发没有 st.secrets 时忽略
         pass
 
-_inject_secrets_to_env()
 
-# ── 第二步：延迟导入业务模块 ──
-# 在环境变量注入完成后再导入，确保配置正确
 def _get_run_research():
     """延迟导入 run_research，返回 (函数, 错误信息)"""
     try:
-        import asyncio
         from src.workflow.graph import run_research
         return run_research, None
     except Exception as e:
@@ -35,15 +57,9 @@ def _get_run_research():
         return None, f"{e}\n\n{traceback.format_exc()}"
 
 
-# ── 页面配置 ──
-st.set_page_config(
-    page_title="多智能体研究系统",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-)
-
-# ── 样式 ──
-st.markdown("""
+def _inject_css():
+    """注入页面样式"""
+    st.markdown("""
 <style>
 :root {
     --bg: #fafafa;
@@ -204,161 +220,175 @@ details[open] summary { border-bottom: 1px solid var(--line-faint); }
 </style>
 """, unsafe_allow_html=True)
 
-# ── 侧边栏 ──
-with st.sidebar:
-    st.markdown("## 架构")
-    st.markdown("""
-    <p style="font-size:13px;color:var(--ink-3);line-height:1.6;">
-        基于 LangGraph Supervisor 模式编排四个专职 Agent，
-        核查不通过时自动触发补充检索。
-    </p>
-    """, unsafe_allow_html=True)
 
-# ── 主页面 ──
-st.markdown("# 多智能体协作研究系统")
-st.markdown("输入研究主题，系统将自动完成搜索、分析、核查与报告生成。")
+def _run_app():
+    """核心应用逻辑"""
+    # 1. 注入环境变量
+    _inject_secrets_to_env()
 
-# ── 检查模块加载 ──
-run_research, import_error = _get_run_research()
+    # 2. 注入样式
+    _inject_css()
 
-if import_error:
-    st.error("应用初始化失败，请检查配置。")
-    with st.expander("查看错误详情"):
-        st.code(import_error)
-    st.stop()
+    # 3. 侧边栏
+    with st.sidebar:
+        st.markdown("## 架构")
+        st.markdown("""
+        <p style="font-size:13px;color:var(--ink-3);line-height:1.6;">
+            基于多智能体协作模式，编排四个专职 Agent，
+            核查不通过时自动触发补充检索。
+        </p>
+        """, unsafe_allow_html=True)
 
-# ── 输入区 ──
-st.markdown(
-    '<p style="font-size:13px;font-weight:500;color:var(--ink-3);margin-top:28px;margin-bottom:6px;">研究主题</p>',
-    unsafe_allow_html=True,
-)
-topic = st.text_area(
-    "研究主题",
-    placeholder="例如：2024年中国新能源汽车出口趋势与竞争格局分析",
-    height=72,
-    key="research_topic",
-    label_visibility="collapsed",
-)
+    # 4. 主标题
+    st.markdown("# 多智能体协作研究系统")
+    st.markdown("输入研究主题，系统将自动完成搜索、分析、核查与报告生成。")
 
-col_spacer, col_btn = st.columns([5, 1])
-with col_btn:
-    start_btn = st.button("开始研究", type="primary", use_container_width=True)
+    # 5. 延迟导入业务模块
+    run_research, import_error = _get_run_research()
 
-# ── 空状态 ──
-if not st.session_state.get("research_done") and not start_btn:
+    if import_error:
+        st.error("应用初始化失败，请检查配置。")
+        with st.expander("查看错误详情"):
+            st.code(import_error)
+        return
+
+    # 6. 输入区
     st.markdown(
-        '<p class="hint">输入研究主题后，系统将通过搜索、分析、核查、写作四个阶段协作完成端到端研究。'
-        '核查阶段可信度不足时，将自动触发补充检索。</p>',
+        '<p style="font-size:13px;font-weight:500;color:var(--ink-3);margin-top:28px;margin-bottom:6px;">研究主题</p>',
         unsafe_allow_html=True,
     )
-
-# ── 研究执行 ──
-if start_btn and topic.strip():
-    st.session_state["research_done"] = False
-    st.session_state["research_topic_value"] = topic.strip()
-    st.session_state["research_result"] = None
-    st.session_state["research_error"] = None
-
-    import asyncio
-    with st.spinner("正在执行多智能体协作研究，预计需要 30-90 秒..."):
-        try:
-            result = asyncio.run(run_research(topic.strip()))
-            st.session_state["research_result"] = result
-            st.session_state["research_done"] = True
-        except Exception as e:
-            import traceback
-            st.session_state["research_error"] = f"{e}\n\n{traceback.format_exc()}"
-
-    st.rerun()
-
-# ── 结果展示 ──
-if st.session_state.get("research_error"):
-    st.error("研究过程中出现错误")
-    with st.expander("查看错误详情"):
-        st.code(st.session_state["research_error"])
-    if st.button("重试", key="retry_btn"):
-        st.session_state["research_error"] = None
-        st.rerun()
-
-elif st.session_state.get("research_done") and st.session_state.get("research_result"):
-    result = st.session_state["research_result"]
-    research_topic = st.session_state.get("research_topic_value", "")
-
-    st.markdown(
-        f'<p style="font-size:15px;font-weight:500;color:var(--ink-1);margin-top:28px;margin-bottom:4px;">{research_topic}</p>',
-        unsafe_allow_html=True,
+    topic = st.text_area(
+        "研究主题",
+        placeholder="例如：2024年中国新能源汽车出口趋势与竞争格局分析",
+        height=72,
+        key="research_topic",
+        label_visibility="collapsed",
     )
 
-    # 步骤展示
-    agent_steps = [
-        ("01", "搜索", "子问题拆分 + Tavily 并行检索"),
-        ("02", "分析", "关键论断与数据提取"),
-        ("03", "核查", "交叉验证 + 可信度标注"),
-        ("04", "写作", "四段式报告生成"),
-    ]
+    col_spacer, col_btn = st.columns([5, 1])
+    with col_btn:
+        start_btn = st.button("开始研究", type="primary", use_container_width=True)
 
-    steps_html = '<div style="margin:12px 0 32px;">'
-    for num, name, desc in agent_steps:
-        steps_html += f"""
-        <div style="padding:14px 0;border-bottom:1px solid rgba(0,0,0,0.04);">
-            <div style="display:flex;align-items:baseline;gap:10px;">
-                <span style="font-family:var(--font-mono);font-size:12px;font-weight:500;color:#16a34a;min-width:22px;">{num}</span>
-                <span style="font-size:14px;font-weight:500;color:#171717;flex:1;">{name}</span>
-                <span style="font-size:12px;font-weight:500;font-family:var(--font-mono);color:#16a34a;">done</span>
-            </div>
-            <div style="font-size:13px;color:#71717a;margin-top:3px;padding-left:32px;">{desc}</div>
-        </div>"""
-    steps_html += '</div>'
-    st.markdown(steps_html, unsafe_allow_html=True)
+    # 7. 空状态
+    if not st.session_state.get("research_done") and not start_btn:
+        st.markdown(
+            '<p class="hint">输入研究主题后，系统将通过搜索、分析、核查、写作四个阶段协作完成端到端研究。'
+            '核查阶段可信度不足时，将自动触发补充检索。</p>',
+            unsafe_allow_html=True,
+        )
 
-    # 指标
-    credibility = result.get("credibility_score", 0)
-    rounds = result.get("research_rounds", 1)
-    sub_count = len(result.get("sub_questions", []))
-
-    if credibility >= 0.7:
-        cred_color = "#16a34a"
-    elif credibility >= 0.5:
-        cred_color = "#d97706"
-    else:
-        cred_color = "#dc2626"
-
-    st.markdown(f"""
-    <div style="display:flex;align-items:baseline;gap:28px;padding:20px 0;
-        border-top:1px solid rgba(0,0,0,0.08);border-bottom:1px solid rgba(0,0,0,0.08);margin:28px 0 36px;">
-        <div style="display:flex;align-items:baseline;gap:6px;">
-            <span style="font-family:var(--font-mono);font-size:22px;font-weight:600;color:{cred_color};line-height:1;">{credibility:.0%}</span>
-            <span style="font-size:13px;color:#71717a;">可信度</span>
-        </div>
-        <div style="width:1px;height:14px;background:rgba(0,0,0,0.08);"></div>
-        <div style="display:flex;align-items:baseline;gap:6px;">
-            <span style="font-family:var(--font-mono);font-size:22px;font-weight:600;color:#171717;line-height:1;">{rounds}</span>
-            <span style="font-size:13px;color:#71717a;">检索轮次</span>
-        </div>
-        <div style="width:1px;height:14px;background:rgba(0,0,0,0.08);"></div>
-        <div style="display:flex;align-items:baseline;gap:6px;">
-            <span style="font-family:var(--font-mono);font-size:22px;font-weight:600;color:#171717;line-height:1;">{sub_count}</span>
-            <span style="font-size:13px;color:#71717a;">子问题</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-    report = result.get("report", "无报告内容")
-    st.markdown(report)
-
-    if result.get("sub_questions"):
-        with st.expander("检索子问题"):
-            for i, q in enumerate(result["sub_questions"], 1):
-                st.markdown(f"{i}. {q}")
-
-    if result.get("process_log"):
-        with st.expander("协作日志"):
-            for log in result["process_log"]:
-                st.text(log)
-
-    st.markdown("---")
-    if st.button("开始新研究", key="new_research_btn"):
+    # 8. 研究执行
+    if start_btn and topic.strip():
         st.session_state["research_done"] = False
+        st.session_state["research_topic_value"] = topic.strip()
         st.session_state["research_result"] = None
+        st.session_state["research_error"] = None
+
+        import asyncio
+        with st.spinner("正在执行多智能体协作研究，预计需要 30-90 秒..."):
+            try:
+                result = asyncio.run(run_research(topic.strip()))
+                st.session_state["research_result"] = result
+                st.session_state["research_done"] = True
+            except Exception as e:
+                import traceback
+                st.session_state["research_error"] = f"{e}\n\n{traceback.format_exc()}"
+
         st.rerun()
+
+    # 9. 错误展示
+    if st.session_state.get("research_error"):
+        st.error("研究过程中出现错误")
+        with st.expander("查看错误详情"):
+            st.code(st.session_state["research_error"])
+        if st.button("重试", key="retry_btn"):
+            st.session_state["research_error"] = None
+            st.rerun()
+
+    # 10. 结果展示
+    elif st.session_state.get("research_done") and st.session_state.get("research_result"):
+        result = st.session_state["research_result"]
+        research_topic = st.session_state.get("research_topic_value", "")
+
+        st.markdown(
+            f'<p style="font-size:15px;font-weight:500;color:var(--ink-1);margin-top:28px;margin-bottom:4px;">{research_topic}</p>',
+            unsafe_allow_html=True,
+        )
+
+        # 步骤展示
+        agent_steps = [
+            ("01", "搜索", "子问题拆分 + Tavily 并行检索"),
+            ("02", "分析", "关键论断与数据提取"),
+            ("03", "核查", "交叉验证 + 可信度标注"),
+            ("04", "写作", "四段式报告生成"),
+        ]
+
+        steps_html = '<div style="margin:12px 0 32px;">'
+        for num, name, desc in agent_steps:
+            steps_html += f"""
+            <div style="padding:14px 0;border-bottom:1px solid rgba(0,0,0,0.04);">
+                <div style="display:flex;align-items:baseline;gap:10px;">
+                    <span style="font-family:var(--font-mono);font-size:12px;font-weight:500;color:#16a34a;min-width:22px;">{num}</span>
+                    <span style="font-size:14px;font-weight:500;color:#171717;flex:1;">{name}</span>
+                    <span style="font-size:12px;font-weight:500;font-family:var(--font-mono);color:#16a34a;">done</span>
+                </div>
+                <div style="font-size:13px;color:#71717a;margin-top:3px;padding-left:32px;">{desc}</div>
+            </div>"""
+        steps_html += '</div>'
+        st.markdown(steps_html, unsafe_allow_html=True)
+
+        # 指标
+        credibility = result.get("credibility_score", 0)
+        rounds = result.get("research_rounds", 1)
+        sub_count = len(result.get("sub_questions", []))
+
+        if credibility >= 0.7:
+            cred_color = "#16a34a"
+        elif credibility >= 0.5:
+            cred_color = "#d97706"
+        else:
+            cred_color = "#dc2626"
+
+        st.markdown(f"""
+        <div style="display:flex;align-items:baseline;gap:28px;padding:20px 0;
+            border-top:1px solid rgba(0,0,0,0.08);border-bottom:1px solid rgba(0,0,0,0.08);margin:28px 0 36px;">
+            <div style="display:flex;align-items:baseline;gap:6px;">
+                <span style="font-family:var(--font-mono);font-size:22px;font-weight:600;color:{cred_color};line-height:1;">{credibility:.0%}</span>
+                <span style="font-size:13px;color:#71717a;">可信度</span>
+            </div>
+            <div style="width:1px;height:14px;background:rgba(0,0,0,0.08);"></div>
+            <div style="display:flex;align-items:baseline;gap:6px;">
+                <span style="font-family:var(--font-mono);font-size:22px;font-weight:600;color:#171717;line-height:1;">{rounds}</span>
+                <span style="font-size:13px;color:#71717a;">检索轮次</span>
+            </div>
+            <div style="width:1px;height:14px;background:rgba(0,0,0,0.08);"></div>
+            <div style="display:flex;align-items:baseline;gap:6px;">
+                <span style="font-family:var(--font-mono);font-size:22px;font-weight:600;color:#171717;line-height:1;">{sub_count}</span>
+                <span style="font-size:13px;color:#71717a;">子问题</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("---")
+        report = result.get("report", "无报告内容")
+        st.markdown(report)
+
+        if result.get("sub_questions"):
+            with st.expander("检索子问题"):
+                for i, q in enumerate(result["sub_questions"], 1):
+                    st.markdown(f"{i}. {q}")
+
+        if result.get("process_log"):
+            with st.expander("协作日志"):
+                for log in result["process_log"]:
+                    st.text(log)
+
+        st.markdown("---")
+        if st.button("开始新研究", key="new_research_btn"):
+            st.session_state["research_done"] = False
+            st.session_state["research_result"] = None
+            st.rerun()
+
+
+# ── 入口 ──
+_safe_main()
