@@ -35,7 +35,7 @@ FACT_CHECK_PROMPT = """你是一个事实核查专家。请对以下研究发现
 {{"overall_score": 0.75}}"""
 
 
-def fact_check_agent(state: ResearchState) -> dict:
+async def fact_check_agent(state: ResearchState) -> dict:
     """核查 Agent 节点"""
     findings = state.get("findings", [])
     if not findings:
@@ -53,7 +53,7 @@ def fact_check_agent(state: ResearchState) -> dict:
             {"role": "system", "content": "你是一个严谨的事实核查专家，擅长交叉验证信息的准确性和可靠性。"},
             {"role": "user", "content": FACT_CHECK_PROMPT.format(findings=findings_text)},
         ]
-        raw = llm_client.chat_json(messages, temperature=0.1)
+        raw = await llm_client.chat_json_async(messages, temperature=0.1)
         parsed = json.loads(raw)
         verified = parsed.get("verified_findings", findings)
         overall_score = parsed.get("overall_score", 0.5)
@@ -62,11 +62,12 @@ def fact_check_agent(state: ResearchState) -> dict:
         # 降级：根据来源数量自动标注
         verified = []
         for f in findings:
-            src_count = len(f.get("sources", []))
+            new_f = dict(f)
+            src_count = len(new_f.get("sources", []))
             cred = "high" if src_count >= 2 else "medium" if src_count == 1 else "low"
-            f["credibility"] = cred
-            f["verification_note"] = "自动标注（LLM 核查不可用）"
-            verified.append(f)
+            new_f["credibility"] = cred
+            new_f["verification_note"] = "自动标注（LLM 核查不可用）"
+            verified.append(new_f)
         overall_score = 0.5
 
     threshold = settings.research.credibility_threshold
