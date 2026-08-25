@@ -1,17 +1,48 @@
 """
 Streamlit 交互界面 — 多智能体协作研究系统
-同步执行模式：无线程、无后台任务，最大化稳定性
+稳定版：先注入环境变量，再延迟导入业务模块
 """
-import asyncio
+import os
+import sys
 import streamlit as st
-from src.workflow.graph import run_research
 
+# ── 第一步：从 Streamlit Secrets 注入环境变量 ──
+# Streamlit Cloud 的 Secrets 不自动成为环境变量，需要手动注入
+def _inject_secrets_to_env():
+    """将 st.secrets 中的配置注入 os.environ，供下层模块读取"""
+    try:
+        secrets = st.secrets
+        for key in secrets.keys():
+            val = secrets[key]
+            if isinstance(val, (str, int, float)):
+                os.environ[key] = str(val)
+    except Exception:
+        # 本地开发没有 st.secrets 时忽略
+        pass
+
+_inject_secrets_to_env()
+
+# ── 第二步：延迟导入业务模块 ──
+# 在环境变量注入完成后再导入，确保配置正确
+def _get_run_research():
+    """延迟导入 run_research，返回 (函数, 错误信息)"""
+    try:
+        import asyncio
+        from src.workflow.graph import run_research
+        return run_research, None
+    except Exception as e:
+        import traceback
+        return None, f"{e}\n\n{traceback.format_exc()}"
+
+
+# ── 页面配置 ──
 st.set_page_config(
     page_title="多智能体研究系统",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
+# ── 样式 ──
 st.markdown("""
 <style>
 :root {
@@ -34,7 +65,6 @@ st.markdown("""
         "PingFang SC", "Microsoft YaHei", sans-serif;
     --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, "Consolas", monospace;
 }
-
 .stApp {
     background: var(--bg);
     font-family: var(--font-sans);
@@ -45,7 +75,6 @@ st.markdown("""
     max-width: 800px;
     padding: 64px 32px 96px;
 }
-
 .stApp h1 {
     font-size: 26px; font-weight: 600; line-height: 1.15;
     letter-spacing: -0.02em; color: var(--ink-1);
@@ -175,7 +204,7 @@ details[open] summary { border-bottom: 1px solid var(--line-faint); }
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────── 侧边栏 ───────────────────────
+# ── 侧边栏 ──
 with st.sidebar:
     st.markdown("## 架构")
     st.markdown("""
@@ -185,10 +214,20 @@ with st.sidebar:
     </p>
     """, unsafe_allow_html=True)
 
-# ─────────────────────── 主页面 ───────────────────────
+# ── 主页面 ──
 st.markdown("# 多智能体协作研究系统")
 st.markdown("输入研究主题，系统将自动完成搜索、分析、核查与报告生成。")
 
+# ── 检查模块加载 ──
+run_research, import_error = _get_run_research()
+
+if import_error:
+    st.error("应用初始化失败，请检查配置。")
+    with st.expander("查看错误详情"):
+        st.code(import_error)
+    st.stop()
+
+# ── 输入区 ──
 st.markdown(
     '<p style="font-size:13px;font-weight:500;color:var(--ink-3);margin-top:28px;margin-bottom:6px;">研究主题</p>',
     unsafe_allow_html=True,
@@ -213,26 +252,30 @@ if not st.session_state.get("research_done") and not start_btn:
         unsafe_allow_html=True,
     )
 
-# ─────────────────────── 研究执行 ───────────────────────
+# ── 研究执行 ──
 if start_btn and topic.strip():
     st.session_state["research_done"] = False
     st.session_state["research_topic_value"] = topic.strip()
     st.session_state["research_result"] = None
     st.session_state["research_error"] = None
 
+    import asyncio
     with st.spinner("正在执行多智能体协作研究，预计需要 30-90 秒..."):
         try:
             result = asyncio.run(run_research(topic.strip()))
             st.session_state["research_result"] = result
             st.session_state["research_done"] = True
         except Exception as e:
-            st.session_state["research_error"] = str(e)
+            import traceback
+            st.session_state["research_error"] = f"{e}\n\n{traceback.format_exc()}"
 
     st.rerun()
 
-# ─────────────────────── 结果展示 ───────────────────────
+# ── 结果展示 ──
 if st.session_state.get("research_error"):
-    st.error(f"研究失败：{st.session_state['research_error']}")
+    st.error("研究过程中出现错误")
+    with st.expander("查看错误详情"):
+        st.code(st.session_state["research_error"])
     if st.button("重试", key="retry_btn"):
         st.session_state["research_error"] = None
         st.rerun()
@@ -246,7 +289,7 @@ elif st.session_state.get("research_done") and st.session_state.get("research_re
         unsafe_allow_html=True,
     )
 
-    # 步骤展示（全部完成）
+    # 步骤展示
     agent_steps = [
         ("01", "搜索", "子问题拆分 + Tavily 并行检索"),
         ("02", "分析", "关键论断与数据提取"),
