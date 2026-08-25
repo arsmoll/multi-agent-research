@@ -1,5 +1,5 @@
 """
-轻量版工作流 — 不依赖 LangGraph，纯 Python 实现
+轻量版工作流 — 纯 Python 实现，无重型依赖
 大幅降低内存占用，适配 Streamlit Cloud 免费层（1GB RAM）
 流程：搜索 → 分析 → 核查 → [条件分支] → 写作
 """
@@ -52,11 +52,11 @@ async def run_research(topic: str) -> dict:
                 _merge_state(state, search_result)
 
                 # 2. 分析
-                analysis_result = analysis_agent(state)
+                analysis_result = await analysis_agent(state)
                 _merge_state(state, analysis_result)
 
                 # 3. 核查
-                check_result = fact_check_agent(state)
+                check_result = await fact_check_agent(state)
                 _merge_state(state, check_result)
 
                 # 判断是否需要补充检索
@@ -77,7 +77,7 @@ async def run_research(topic: str) -> dict:
                     break
 
             # 4. 写作
-            write_result = writing_agent(state)
+            write_result = await writing_agent(state)
             _merge_state(state, write_result)
 
         await asyncio.wait_for(_run(), timeout=RESEARCH_TIMEOUT)
