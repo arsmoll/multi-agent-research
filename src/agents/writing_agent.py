@@ -2,10 +2,12 @@
 写作 Agent — 多智能体协作研究系统
 职责：基于核查后的发现，生成四段式结构化研究报告
 """
+import logging
 from src.llm.client import llm_client
 from src.workflow.state import ResearchState
 
-# 报告生成 Prompt
+logger = logging.getLogger(__name__)
+
 REPORT_PROMPT = """你是一个专业的研究报告撰写专家。请基于以下经过核查的研究发现，撰写一份结构化研究报告。
 
 研究主题：{topic}
@@ -36,12 +38,7 @@ REPORT_PROMPT = """你是一个专业的研究报告撰写专家。请基于以�
 
 
 def writing_agent(state: ResearchState) -> dict:
-    """写作 Agent 节点
-
-    1. 接收核查后的研究发现
-    2. LLM 生成四段式结构化报告
-    3. 输出最终研究报告
-    """
+    """写作 Agent 节点"""
     topic = state["research_topic"]
     verified = state.get("verified_findings", [])
 
@@ -52,7 +49,6 @@ def writing_agent(state: ResearchState) -> dict:
             "messages": ["[写作Agent] 无有效发现，生成空报告"],
         }
 
-    # 格式化发现数据供 LLM 使用
     findings_text = ""
     for i, f in enumerate(verified, 1):
         credibility = f.get("credibility", "unknown")
@@ -64,11 +60,24 @@ def writing_agent(state: ResearchState) -> dict:
         if f.get("verification_note"):
             findings_text += f"   核查说明：{f['verification_note']}\n"
 
-    messages = [
-        {"role": "system", "content": "你是一个专业的研究报告撰写专家，擅长将研究发现整合为清晰、结构化的报告。"},
-        {"role": "user", "content": REPORT_PROMPT.format(topic=topic, findings=findings_text)},
-    ]
-    report = llm_client.chat(messages, temperature=0.4)
+    try:
+        messages = [
+            {"role": "system", "content": "你是一个专业的研究报告撰写专家，擅长将研究发现整合为清晰、结构化的报告。"},
+            {"role": "user", "content": REPORT_PROMPT.format(topic=topic, findings=findings_text)},
+        ]
+        report = llm_client.chat(messages, temperature=0.4)
+    except Exception as e:
+        logger.error(f"写作 Agent LLM 调用失败: {e}")
+        # 降级：直接格式化研究发现
+        report = f"# 研究报告：{topic}\n\n## 一、摘要\n\n本研究围绕「{topic}」展开，以下为关键发现摘要。\n\n## 二、关键发现\n\n"
+        for i, f in enumerate(verified, 1):
+            cred = f.get("credibility", "unknown")
+            report += f"{i}. {f.get('claim', '')} [{cred}]\n   数据：{f.get('data', '')}\n\n"
+        report += "\n## 四、信息来源\n\n"
+        for f in verified:
+            for url in f.get("sources", []):
+                report += f"- {url}\n"
+        report += "\n> 注：报告生成异常，以上为自动格式化的研究发现。"
 
     return {
         "report": report,
