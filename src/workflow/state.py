@@ -1,12 +1,11 @@
 """
-LangGraph 状态定义 — 多智能体协作研究系统
-定义工作流中各节点共享的状态结构
+工作流状态定义 — 多智能体协作研究系统
+定义各 Agent 之间共享的状态结构
 """
-from typing import TypedDict, Annotated
-from operator import add
+from typing import TypedDict
 
 
-class ResearchState(TypedDict):
+class ResearchState(TypedDict, total=False):
     """多智能体研究工作流状态"""
     # 输入
     research_topic: str
@@ -28,4 +27,4 @@ class ResearchState(TypedDict):
 
     # 流程控制
     research_round: int
-    messages: Annotated[list[str], add]
+    messages: list[str]
