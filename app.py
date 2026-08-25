@@ -1,14 +1,11 @@
 """
 Streamlit 交互界面 — 多智能体协作研究系统
-超稳定版：全链路错误捕获 + 延迟加载 + 环境变量注入
+极致稳定版：极简顶层导入 + 全链路错误捕获 + 优雅降级
 """
-import os
-import sys
-
-# ── 最基础导入：streamlit 必须先有，否则连错误都显示不了 ──
+# ── 顶层仅导入最基础的模块，最大限度降低崩溃风险 ──
 import streamlit as st
 
-# ── 页面配置（尽量早调用，防止后续出错） ──
+# 页面配置必须在最前面
 st.set_page_config(
     page_title="多智能体研究系统",
     layout="centered",
@@ -16,8 +13,8 @@ st.set_page_config(
 )
 
 
-def _safe_main():
-    """主应用逻辑，全部包裹在 try/except 中"""
+def main():
+    """所有业务逻辑都在这个函数里，外层兜底"""
     try:
         _run_app()
     except Exception as e:
@@ -25,20 +22,16 @@ def _safe_main():
         st.error("应用运行出错")
         with st.expander("查看错误详情", expanded=True):
             st.code(f"{e}\n\n{traceback.format_exc()}")
-        st.markdown(
-            '<p style="font-size:13px;color:#71717a;margin-top:16px;">'
-            '请截图反馈，或刷新页面重试。</p>',
-            unsafe_allow_html=True,
-        )
+        st.caption("请刷新页面重试，或联系管理员反馈问题。")
 
 
-def _inject_secrets_to_env():
-    """将 st.secrets 中的配置注入 os.environ"""
+def _inject_secrets():
+    """将 st.secrets 注入环境变量"""
+    import os
     try:
-        secrets = st.secrets
-        for key in secrets.keys():
+        for key in st.secrets.keys():
             try:
-                val = secrets[key]
+                val = st.secrets[key]
                 if isinstance(val, (str, int, float)):
                     os.environ[key] = str(val)
             except Exception:
@@ -47,9 +40,23 @@ def _inject_secrets_to_env():
         pass
 
 
-def _get_run_research():
-    """延迟导入 run_research，返回 (函数, 错误信息)"""
+def _load_research_module():
+    """延迟导入研究模块，返回 (run_research, error_msg)"""
     try:
+        import os
+        import sys
+
+        # 确保项目根目录在 sys.path 中
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+
+        # 加载 .env（如果存在）
+        env_path = os.path.join(project_root, ".env")
+        if os.path.exists(env_path):
+            from dotenv import load_dotenv
+            load_dotenv(env_path)
+
         from src.workflow.graph import run_research
         return run_research, None
     except Exception as e:
@@ -224,7 +231,7 @@ details[open] summary { border-bottom: 1px solid var(--line-faint); }
 def _run_app():
     """核心应用逻辑"""
     # 1. 注入环境变量
-    _inject_secrets_to_env()
+    _inject_secrets()
 
     # 2. 注入样式
     _inject_css()
@@ -244,12 +251,13 @@ def _run_app():
     st.markdown("输入研究主题，系统将自动完成搜索、分析、核查与报告生成。")
 
     # 5. 延迟导入业务模块
-    run_research, import_error = _get_run_research()
+    run_research, import_error = _load_research_module()
 
     if import_error:
-        st.error("应用初始化失败，请检查配置。")
+        st.error("应用初始化失败，无法加载研究模块。")
         with st.expander("查看错误详情"):
             st.code(import_error)
+        st.info("请检查 API 密钥配置是否正确，或联系管理员。")
         return
 
     # 6. 输入区
@@ -391,4 +399,4 @@ def _run_app():
 
 
 # ── 入口 ──
-_safe_main()
+main()
